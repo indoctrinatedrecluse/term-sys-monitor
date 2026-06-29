@@ -221,6 +221,9 @@ impl LuaEngine {
             }
         }
         
+        // Sort widgets alphabetically by name to guarantee stable rendering order
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        
         Ok(result)
     }
 }

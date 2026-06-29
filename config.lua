@@ -4,7 +4,7 @@
 local sysmon = require("sysmon")
 
 -- 1. Register the CPU Widget
-sysmon.register_widget("1_cpu_percent", {
+sysmon.register_widget("1. CPU Percent", {
     render = function()
         local usage = sysmon.get_cpu_usage()
         
@@ -15,12 +15,13 @@ sysmon.register_widget("1_cpu_percent", {
             color = "yellow"
         end
         
-        return string.format("CPU Usage:  %.1f%%", usage), color
+        -- Use concatenation to guarantee percent sign rendering
+        return string.format("%.1f", usage) .. "%", color
     end
 })
 
 -- 2. Register the RAM Widget
-sysmon.register_widget("2_ram_usage", {
+sysmon.register_widget("2. RAM Usage", {
     render = function()
         -- Convert bytes to gigabytes
         local total_gb = sysmon.get_total_memory() / 1024 / 1024 / 1024
@@ -34,23 +35,24 @@ sysmon.register_widget("2_ram_usage", {
             color = "yellow"
         end
         
-        return string.format("RAM Usage:  %.2f GB / %.2f GB (%.1f%%)", used_gb, total_gb, pct), color
+        -- Use concatenation to cleanly format the closing parenthesis
+        return string.format("%.2f GB / %.2f GB (%.1f", used_gb, total_gb, pct) .. "%)", color
     end
 })
 
 -- 3. Register the GPU Widget
-sysmon.register_widget("3_gpu_usage", {
+sysmon.register_widget("3. GPU Usage", {
     render = function()
         local usage = sysmon.get_gpu_usage()
         
         -- If usage is negative, NVML was not initialized or is unavailable
         if usage < 0 then
-            return "GPU Status: Not Detected / Unsupported (NVML failed to load)", "gray"
+            return "Not Detected / Unsupported (NVML failed to load)", "gray"
         end
         
         local name = sysmon.get_gpu_name()
         
-        -- Query VRAM (convert to megabytes or gigabytes)
+        -- Query VRAM (convert to megabytes)
         local total_vram_mb = sysmon.get_gpu_memory_total() / 1024 / 1024
         local used_vram_mb = sysmon.get_gpu_memory_used() / 1024 / 1024
         
@@ -61,6 +63,9 @@ sysmon.register_widget("3_gpu_usage", {
             color = "yellow"
         end
         
-        return string.format("GPU Usage:  %s | Load: %.1f%% | VRAM: %.0f MB / %.0f MB", name, usage, used_vram_mb, total_vram_mb), color
+        -- Format GPU load and VRAM usage using concatenation
+        local load_str = string.format("%s | Load: %.1f", name, usage) .. "%"
+        local vram_str = string.format(" | VRAM: %.0f MB / %.0f MB", used_vram_mb, total_vram_mb)
+        return load_str .. vram_str, color
     end
 })
