@@ -1,0 +1,11 @@
+[package]
+name = "term-sys-monitor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = "0.26"
+crossterm = "0.27"
+sysinfo = "0.30"
+mlua = { version = "0.9", features = ["lua54", "vendored"] }
+tokio = { version = "1", features = ["full"] }
