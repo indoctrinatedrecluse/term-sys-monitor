@@ -2,7 +2,7 @@ mod engine;
 
 use engine::{LuaEngine, WidgetInfo};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::io;
 
@@ -67,28 +67,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         original_hook(panic_info);
     }));
 
-    // Setup shared CPU usage atomic variable (stored as CPU % * 10)
+    // Setup shared stats variables
     let cpu_usage = Arc::new(AtomicU32::new(0));
+    let total_mem = Arc::new(AtomicU64::new(0));
+    let used_mem = Arc::new(AtomicU64::new(0));
+    let mem_percent = Arc::new(AtomicU32::new(0));
     
-    // Spawn background thread to poll system CPU usage using sysinfo
+    // Spawn background thread to poll system stats using sysinfo
     let cpu_usage_clone = cpu_usage.clone();
+    let total_mem_clone = total_mem.clone();
+    let used_mem_clone = used_mem.clone();
+    let mem_percent_clone = mem_percent.clone();
+
     std::thread::spawn(move || {
         let mut sys = System::new_all();
         // Warm up sysinfo to calculate first CPU usage interval correctly
         sys.refresh_cpu();
+        sys.refresh_memory();
         std::thread::sleep(Duration::from_millis(100));
         sys.refresh_cpu();
+        sys.refresh_memory();
 
         loop {
             sys.refresh_cpu();
-            let global_cpu = sys.global_cpu_info().cpu_usage(); // returns 0.0 to 100.0
+            sys.refresh_memory();
+
+            // Store CPU usage (* 10)
+            let global_cpu = sys.global_cpu_info().cpu_usage();
             cpu_usage_clone.store((global_cpu * 10.0) as u32, Ordering::Relaxed);
+
+            // Store RAM usage
+            let total = sys.total_memory();
+            let used = sys.used_memory();
+            let pct = if total > 0 {
+                ((used as f64 / total as f64) * 1000.0) as u32
+            } else {
+                0
+            };
+
+            total_mem_clone.store(total, Ordering::Relaxed);
+            used_mem_clone.store(used, Ordering::Relaxed);
+            mem_percent_clone.store(pct, Ordering::Relaxed);
+
             std::thread::sleep(Duration::from_millis(500));
         }
     });
 
+    // Initialize NVML for GPU metrics if available
+    let nvml = nvml_wrapper::Nvml::init().ok();
+
     // Initialize Lua Engine and read config.lua
-    let lua_engine = match LuaEngine::new(cpu_usage.clone()) {
+    let lua_engine = match LuaEngine::new(
+        cpu_usage.clone(),
+        total_mem.clone(),
+        used_mem.clone(),
+        mem_percent.clone(),
+        nvml,
+    ) {
         Ok(engine) => engine,
         Err(e) => {
             restore_terminal();

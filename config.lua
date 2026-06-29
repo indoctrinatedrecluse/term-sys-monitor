@@ -3,13 +3,11 @@
 
 local sysmon = require("sysmon")
 
--- Register the CPU widget
-sysmon.register_widget("cpu_percent", {
+-- 1. Register the CPU Widget
+sysmon.register_widget("1_cpu_percent", {
     render = function()
-        -- sysmon.get_cpu_usage() is exposed by Rust
         local usage = sysmon.get_cpu_usage()
         
-        -- Determine color based on threshold
         local color = "green"
         if usage > 80 then
             color = "red"
@@ -17,7 +15,52 @@ sysmon.register_widget("cpu_percent", {
             color = "yellow"
         end
         
-        -- Return the display text and its color
-        return string.format("CPU Usage: %.1f%%", usage), color
+        return string.format("CPU Usage:  %.1f%%", usage), color
+    end
+})
+
+-- 2. Register the RAM Widget
+sysmon.register_widget("2_ram_usage", {
+    render = function()
+        -- Convert bytes to gigabytes
+        local total_gb = sysmon.get_total_memory() / 1024 / 1024 / 1024
+        local used_gb = sysmon.get_used_memory() / 1024 / 1024 / 1024
+        local pct = sysmon.get_memory_percent()
+        
+        local color = "green"
+        if pct > 85 then
+            color = "red"
+        elseif pct > 65 then
+            color = "yellow"
+        end
+        
+        return string.format("RAM Usage:  %.2f GB / %.2f GB (%.1f%%)", used_gb, total_gb, pct), color
+    end
+})
+
+-- 3. Register the GPU Widget
+sysmon.register_widget("3_gpu_usage", {
+    render = function()
+        local usage = sysmon.get_gpu_usage()
+        
+        -- If usage is negative, NVML was not initialized or is unavailable
+        if usage < 0 then
+            return "GPU Status: Not Detected / Unsupported (NVML failed to load)", "gray"
+        end
+        
+        local name = sysmon.get_gpu_name()
+        
+        -- Query VRAM (convert to megabytes or gigabytes)
+        local total_vram_mb = sysmon.get_gpu_memory_total() / 1024 / 1024
+        local used_vram_mb = sysmon.get_gpu_memory_used() / 1024 / 1024
+        
+        local color = "green"
+        if usage > 80 then
+            color = "red"
+        elseif usage > 50 then
+            color = "yellow"
+        end
+        
+        return string.format("GPU Usage:  %s | Load: %.1f%% | VRAM: %.0f MB / %.0f MB", name, usage, used_vram_mb, total_vram_mb), color
     end
 })

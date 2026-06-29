@@ -76,5 +76,14 @@ sysmon.register_widget("cpu_percent", {
     end
 })
 ```
-* **`sysmon.get_cpu_usage()`**: Exposes the live CPU load from Rust (0.0 to 100.0).
-* **Return values**: The rendering function expects `(text, color_name)` to style the terminal output. Supported color names are standard terminal ANSI colors (e.g., `"green"`, `"yellow"`, `"red"`, `"cyan"`, `"magenta"`, `"white"`, etc.).
+* **`sysmon.get_cpu_usage()`**: Exposes the live global CPU load from Rust (0.0 to 100.0).
+* **`sysmon.get_total_memory()`**: Returns total system RAM in bytes.
+* **`sysmon.get_used_memory()`**: Returns used system RAM in bytes.
+* **`sysmon.get_memory_percent()`**: Returns RAM utilization percentage (0.0 to 100.0).
+* **`sysmon.get_gpu_usage()`**: Returns GPU core utilization percentage (0.0 to 100.0), or `-1.0` if not available.
+* **`sysmon.get_gpu_memory_used()`**: Returns GPU VRAM used in bytes, or `-1` if not available.
+* **`sysmon.get_gpu_memory_total()`**: Returns total GPU VRAM in bytes, or `-1` if not available.
+* **`sysmon.get_gpu_name()`**: Returns the GPU model name as a string (e.g. `"NVIDIA GeForce RTX 4080"`), or `"N/A"`.
+
+* **Return values**: The rendering function expects `(text, color_name)` to style the terminal output. Supported color names are standard terminal ANSI colors (e.g., `"green"`, `"yellow"`, `"red"`, `"cyan"`, `"magenta"`, `"white"`, `"gray"`, etc.).
+
