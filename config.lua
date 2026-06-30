@@ -105,8 +105,8 @@ sysmon.register_widget("3. GPU Usage", {
 
 -- 4. Dynamic Disk Registry (Creates separate widgets for all mounted drives)
 local disks = sysmon.get_disks()
-for _, disk in ipairs(disks) do
-    local key = string.format("4. Disk %s", disk.mount_point)
+for i, disk in ipairs(disks) do
+    local key = string.format("4.%d. Disk %s", i, disk.mount_point)
     sysmon.register_widget(key, {
         render = function()
             local current_disks = sysmon.get_disks()
