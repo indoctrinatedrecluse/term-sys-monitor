@@ -1,6 +1,6 @@
 mod engine;
 
-use engine::{LuaEngine, WidgetInfo};
+use engine::{LuaEngine, WidgetInfo, DiskStats};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -73,21 +73,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let total_mem = Arc::new(AtomicU64::new(0));
     let used_mem = Arc::new(AtomicU64::new(0));
     let mem_percent = Arc::new(AtomicU32::new(0));
+    let cpu_frequency = Arc::new(AtomicU64::new(0));
+    let uptime = Arc::new(AtomicU64::new(0));
+    let disks = Arc::new(std::sync::Mutex::new(Vec::<DiskStats>::new()));
+
+    // Query static host details at startup using a temp system instance
+    let mut temp_sys = System::new_all();
+    temp_sys.refresh_cpu();
+    let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
+    let os_name = System::name().unwrap_or_else(|| "Unknown".to_string());
+    let kernel_version = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+    let cpu_brand = if let Some(cpu) = temp_sys.cpus().first() {
+        cpu.brand().to_string()
+    } else {
+        "Unknown".to_string()
+    };
     
     // Spawn background thread to poll system stats using sysinfo
     let cpu_usage_clone = cpu_usage.clone();
     let total_mem_clone = total_mem.clone();
     let used_mem_clone = used_mem.clone();
     let mem_percent_clone = mem_percent.clone();
+    let cpu_frequency_clone = cpu_frequency.clone();
+    let uptime_clone = uptime.clone();
+    let disks_clone = disks.clone();
 
     std::thread::spawn(move || {
         let mut sys = System::new_all();
+        let mut disk_loader = sysinfo::Disks::new_with_refreshed_list();
+        
+        // Populate disks list immediately at start
+        {
+            if let Ok(mut list) = disks_clone.lock() {
+                for d in disk_loader.list() {
+                    list.push(DiskStats {
+                        name: d.name().to_string_lossy().into_owned(),
+                        mount_point: d.mount_point().to_string_lossy().into_owned(),
+                        total_space: d.total_space(),
+                        available_space: d.available_space(),
+                        is_removable: d.is_removable(),
+                    });
+                }
+            }
+        }
+
         // Warm up sysinfo to calculate first CPU usage interval correctly
         sys.refresh_cpu();
         sys.refresh_memory();
         std::thread::sleep(Duration::from_millis(100));
         sys.refresh_cpu();
         sys.refresh_memory();
+
+        let mut loop_counter: u64 = 0;
 
         loop {
             sys.refresh_cpu();
@@ -110,6 +147,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             used_mem_clone.store(used, Ordering::Relaxed);
             mem_percent_clone.store(pct, Ordering::Relaxed);
 
+            // Store CPU Frequency (first core or global CPU)
+            let freq = if let Some(cpu) = sys.cpus().first() {
+                cpu.frequency()
+            } else {
+                0
+            };
+            cpu_frequency_clone.store(freq, Ordering::Relaxed);
+
+            // Store System Uptime
+            let upt = System::uptime();
+            uptime_clone.store(upt, Ordering::Relaxed);
+
+            // Refresh Disk list every 5 seconds (500ms * 10)
+            if loop_counter % 10 == 0 {
+                disk_loader.refresh_list();
+                let mut current_disks = Vec::new();
+                for d in disk_loader.list() {
+                    current_disks.push(DiskStats {
+                        name: d.name().to_string_lossy().into_owned(),
+                        mount_point: d.mount_point().to_string_lossy().into_owned(),
+                        total_space: d.total_space(),
+                        available_space: d.available_space(),
+                        is_removable: d.is_removable(),
+                    });
+                }
+                if let Ok(mut list) = disks_clone.lock() {
+                    *list = current_disks;
+                }
+            }
+
+            loop_counter = loop_counter.wrapping_add(1);
             std::thread::sleep(Duration::from_millis(500));
         }
     });
@@ -119,11 +187,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Lua Engine and read config.lua
     let lua_engine = match LuaEngine::new(
-        cpu_usage.clone(),
-        total_mem.clone(),
-        used_mem.clone(),
-        mem_percent.clone(),
+        cpu_usage,
+        total_mem,
+        used_mem,
+        mem_percent,
+        cpu_frequency,
+        uptime,
+        disks,
         nvml,
+        hostname,
+        os_name,
+        kernel_version,
+        cpu_brand,
     ) {
         Ok(engine) => engine,
         Err(e) => {
@@ -195,8 +270,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut widget_spans = Vec::new();
                 for w in widgets {
                     widget_spans.push(Line::from(vec![
-                        // Pad widget name to 16 characters and add a nice column separator
-                        Span::styled(format!(" {: <16} │ ", w.name), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+                        // Pad widget name to 18 characters and add a nice column separator
+                        Span::styled(format!(" {: <18} │ ", w.name), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
                         Span::styled(w.text, Style::default().fg(parse_color(&w.color))),
                     ]));
                 }

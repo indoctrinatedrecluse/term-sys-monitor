@@ -80,10 +80,24 @@ sysmon.register_widget("cpu_percent", {
 * **`sysmon.get_total_memory()`**: Returns total system RAM in bytes.
 * **`sysmon.get_used_memory()`**: Returns used system RAM in bytes.
 * **`sysmon.get_memory_percent()`**: Returns RAM utilization percentage (0.0 to 100.0).
-* **`sysmon.get_gpu_usage()`**: Returns GPU core utilization percentage (0.0 to 100.0), or `-1.0` if not available.
-* **`sysmon.get_gpu_memory_used()`**: Returns GPU VRAM used in bytes, or `-1` if not available.
-* **`sysmon.get_gpu_memory_total()`**: Returns total GPU VRAM in bytes, or `-1` if not available.
-* **`sysmon.get_gpu_name()`**: Returns the GPU model name as a string (e.g. `"NVIDIA GeForce RTX 4080"`), or `"N/A"`.
+* **`sysmon.get_gpu_usage()`**: Returns GPU core utilization percentage (0.0 to 100.0), or `-1.0` if NVML is unavailable.
+* **`sysmon.get_gpu_memory_used()`**: Returns GPU VRAM used in bytes, or `-1` if unavailable.
+* **`sysmon.get_gpu_memory_total()`**: Returns total GPU VRAM in bytes, or `-1` if unavailable.
+* **`sysmon.get_gpu_name()`**: Returns the GPU model name as a string, or `"N/A"`.
+* **`sysmon.get_disks()`**: Returns a table array of mounted disk partitions. Each item contains:
+  * `name`: Volume label string.
+  * `mount_point`: Mount point directory string (e.g., `C:\` or `/`).
+  * `total_space`: Capacity in bytes.
+  * `available_space`: Free capacity in bytes.
+  * `is_removable`: Boolean indicating external/USB media.
+* **`sysmon.get_uptime()`**: Returns system uptime in seconds.
+* **`sysmon.get_cpu_brand()`**: Returns the CPU model brand string.
+* **`sysmon.get_cpu_frequency()`**: Returns the CPU core frequency in MHz.
+* **`sysmon.get_hostname()`**: Returns the system hostname.
+* **`sysmon.get_os_name()`**: Returns the operating system name (e.g., `"Windows"`).
+* **`sysmon.get_kernel_version()`**: Returns the OS kernel version.
+* **`sysmon.create_bar(percent, width)`**: Generates a standard Unicode progress bar block string (defaults to a width of 20).
 
 * **Return values**: The rendering function expects `(text, color_name)` to style the terminal output. Supported color names are standard terminal ANSI colors (e.g., `"green"`, `"yellow"`, `"red"`, `"cyan"`, `"magenta"`, `"white"`, `"gray"`, etc.).
+
 
