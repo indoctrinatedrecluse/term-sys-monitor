@@ -97,7 +97,17 @@ sysmon.register_widget("cpu_percent", {
 * **`sysmon.get_os_name()`**: Returns the operating system name (e.g., `"Windows"`).
 * **`sysmon.get_kernel_version()`**: Returns the OS kernel version.
 * **`sysmon.create_bar(percent, width)`**: Generates a standard Unicode progress bar block string (defaults to a width of 20).
+* **`sysmon.create_sparkline(values_table)`**: Generates a horizontal Unicode sparkline trend chart string based on a Lua array of floats (0.0 to 100.0).
+* **`sysmon.get_processes(sort_by, limit)`**: Returns a table array of top running processes. `sort_by` can be `"cpu"` or `"memory"`. `limit` defaults to 5. Each process item contains:
+  * `pid`: Integer process ID.
+  * `name`: Process name string.
+  * `cpu_usage`: Process CPU utilization percentage (0.0 to 100.0).
+  * `memory`: Memory space consumed in bytes.
 
-* **Return values**: The rendering function expects `(text, color_name)` to style the terminal output. Supported color names are standard terminal ANSI colors (e.g., `"green"`, `"yellow"`, `"red"`, `"cyan"`, `"magenta"`, `"white"`, `"gray"`, etc.).
+* **Return values**: The widget `render` function can return:
+  1. **Single string & optional color** (e.g., `return "Text", "green"`).
+  2. **Table of spans** for rich multi-color lines (e.g., `return { { "[██", "green" }, { "░░]", "gray" } }`).
 
-
+* **Interactive Controls**:
+  * **`q`**: Quits the application and restores the terminal console.
+  * **`r`**: Hot-reloads `config.lua` instantly at runtime, letting you design widgets live.

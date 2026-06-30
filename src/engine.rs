@@ -12,10 +12,23 @@ pub struct DiskStats {
     pub is_removable: bool,
 }
 
-pub struct WidgetInfo {
+#[derive(Clone, Debug)]
+pub struct ProcessStats {
+    pub pid: usize,
     pub name: String,
+    pub cpu_usage: f32,
+    pub memory: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SpanInfo {
     pub text: String,
     pub color: String,
+}
+
+pub struct WidgetInfo {
+    pub name: String,
+    pub spans: Vec<SpanInfo>,
 }
 
 pub struct LuaEngine {
@@ -27,6 +40,8 @@ pub struct LuaEngine {
     cpu_frequency: Arc<AtomicU64>,
     uptime: Arc<AtomicU64>,
     disks: Arc<std::sync::Mutex<Vec<DiskStats>>>,
+    top_cpu_procs: Arc<std::sync::Mutex<Vec<ProcessStats>>>,
+    top_mem_procs: Arc<std::sync::Mutex<Vec<ProcessStats>>>,
     nvml: Arc<Option<nvml_wrapper::Nvml>>,
     hostname: String,
     os_name: String,
@@ -44,6 +59,8 @@ impl LuaEngine {
         cpu_frequency: Arc<AtomicU64>,
         uptime: Arc<AtomicU64>,
         disks: Arc<std::sync::Mutex<Vec<DiskStats>>>,
+        top_cpu_procs: Arc<std::sync::Mutex<Vec<ProcessStats>>>,
+        top_mem_procs: Arc<std::sync::Mutex<Vec<ProcessStats>>>,
         nvml: Option<nvml_wrapper::Nvml>,
         hostname: String,
         os_name: String,
@@ -62,6 +79,8 @@ impl LuaEngine {
             cpu_frequency,
             uptime,
             disks,
+            top_cpu_procs,
+            top_mem_procs,
             nvml,
             hostname,
             os_name,
@@ -85,6 +104,8 @@ impl LuaEngine {
         let cpu_frequency_shared = self.cpu_frequency.clone();
         let uptime_shared = self.uptime.clone();
         let disks_shared = self.disks.clone();
+        let top_cpu_procs_shared = self.top_cpu_procs.clone();
+        let top_mem_procs_shared = self.top_mem_procs.clone();
         let nvml_shared = self.nvml.clone();
         
         let hostname_val = self.hostname.clone();
@@ -253,6 +274,34 @@ impl LuaEngine {
                 Ok(disks_table)
             })?;
             sysmon.set("get_disks", get_disks)?;
+
+            // --- Process APIs ---
+
+            // sysmon.get_processes(sort_by, limit)
+            let top_cpu_fn = top_cpu_procs_shared.clone();
+            let top_mem_fn = top_mem_procs_shared.clone();
+            let get_processes = lua.create_function(move |lua, (sort_by, limit): (String, Option<usize>)| {
+                let limit = limit.unwrap_or(5);
+                let procs_table = lua.create_table()?;
+                
+                let stats = if sort_by.to_lowercase() == "cpu" {
+                    top_cpu_fn.lock().unwrap().clone()
+                } else {
+                    top_mem_fn.lock().unwrap().clone()
+                };
+
+                for (idx, proc) in stats.iter().take(limit).enumerate() {
+                    let entry = lua.create_table()?;
+                    entry.set("pid", proc.pid)?;
+                    entry.set("name", proc.name.clone())?;
+                    entry.set("cpu_usage", proc.cpu_usage)?;
+                    entry.set("memory", proc.memory)?;
+                    procs_table.set(idx + 1, entry)?;
+                }
+
+                Ok(procs_table)
+            })?;
+            sysmon.set("get_processes", get_processes)?;
             
             // --- UI Helpers ---
             
@@ -266,6 +315,19 @@ impl LuaEngine {
                 Ok(bar)
             })?;
             sysmon.set("create_bar", create_bar)?;
+
+            // sysmon.create_sparkline(values_table)
+            let create_sparkline = lua.create_function(|_, values: Vec<f32>| {
+                let spark_chars = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+                let mut sparkline = String::new();
+                for val in values {
+                    let val = val.clamp(0.0, 100.0);
+                    let idx = ((val / 100.0) * 7.0).round() as usize;
+                    sparkline.push_str(spark_chars[idx]);
+                }
+                Ok(sparkline)
+            })?;
+            sysmon.set("create_sparkline", create_sparkline)?;
             
             // --- General Widget Registry ---
             
@@ -294,6 +356,15 @@ impl LuaEngine {
         Ok(())
     }
 
+    /// Clears Lua preloads and reloads configuration
+    pub fn reload_config<P: AsRef<Path>>(&self, path: P) -> mlua::Result<()> {
+        let package: Table = self.lua.globals().get("package")?;
+        let loaded: Table = package.get("loaded")?;
+        loaded.set("sysmon", mlua::Nil)?;
+        self.load_config(path)?;
+        Ok(())
+    }
+
     /// Iterates through the registered Lua widgets and executes their render functions.
     pub fn get_widgets(&self) -> mlua::Result<Vec<WidgetInfo>> {
         let package: Table = self.lua.globals().get("package")?;
@@ -314,25 +385,54 @@ impl LuaEngine {
             let render_fn: Option<mlua::Function> = config.get("render").ok();
             
             if let Some(render_fn) = render_fn {
-                // Call Lua render function, capturing any errors and returning them as red text
-                match render_fn.call::<_, (String, String)>(()) {
-                    Ok((text, color)) => {
-                        result.push(WidgetInfo { name, text, color });
-                    }
+                // Call Lua render function, capturing multiple return values (MultiValue)
+                let multi: mlua::MultiValue = match render_fn.call(()) {
+                    Ok(m) => m,
                     Err(e) => {
-                        result.push(WidgetInfo {
-                            name,
+                        let mut err_spans = Vec::new();
+                        err_spans.push(SpanInfo {
                             text: format!("Lua Error: {}", e),
                             color: "red".to_string(),
                         });
+                        result.push(WidgetInfo { name, spans: err_spans });
+                        continue;
+                    }
+                };
+
+                let mut spans = Vec::new();
+                if !multi.is_empty() {
+                    let first = multi.get(0).unwrap();
+                    match first {
+                        mlua::Value::Table(t) => {
+                            // Parse table of spans: { { "text", "color" }, { "text", "color" } }
+                            for item_val in t.clone().sequence_values::<mlua::Value>() {
+                                if let Ok(mlua::Value::Table(item)) = item_val {
+                                    let text: String = item.get(1).unwrap_or_default();
+                                    let color: String = item.get(2).unwrap_or_else(|_| "white".to_string());
+                                    spans.push(SpanInfo { text, color });
+                                }
+                            }
+                        }
+                        mlua::Value::String(s) => {
+                            let text = s.to_str()?.to_string();
+                            let color = if let Some(mlua::Value::String(c_val)) = multi.get(1) {
+                                c_val.to_str()?.to_string()
+                            } else {
+                                "white".to_string()
+                            };
+                            spans.push(SpanInfo { text, color });
+                        }
+                        _ => {}
                     }
                 }
+                result.push(WidgetInfo { name, spans });
             } else {
-                result.push(WidgetInfo {
-                    name: name.clone(),
+                let mut err_spans = Vec::new();
+                err_spans.push(SpanInfo {
                     text: format!("Widget '{}' has no render function", name),
                     color: "yellow".to_string(),
                 });
+                result.push(WidgetInfo { name: name.clone(), spans: err_spans });
             }
         }
         

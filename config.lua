@@ -19,63 +19,91 @@ local function format_uptime(secs)
     end
 end
 
--- 0. Register System Info Widget (Demonstrating static & diagnostic APIs)
+-- Helper to construct a multi-color progress bar table of spans
+local function make_colored_bar(percent, width)
+    local width = width or 20
+    local filled = math.floor((percent / 100) * width)
+    local empty = width - filled
+    
+    local color = "green"
+    if percent > 80 then
+        color = "red"
+    elseif percent > 50 then
+        color = "yellow"
+    end
+    
+    return {
+        { "[", "cyan" },
+        { string.rep("█", filled), color },
+        { string.rep("░", empty), "gray" },
+        { "]", "cyan" }
+    }
+end
+
+-- Helper to concatenate two span lists
+local function merge_spans(spans1, spans2)
+    local result = {}
+    for _, s in ipairs(spans1) do
+        table.insert(result, s)
+    end
+    for _, s in ipairs(spans2) do
+        table.insert(result, s)
+    end
+    return result
+end
+
+-- 0. Register System Info Widget (Cyan Status Bar)
 sysmon.register_widget("0. System Info", {
     render = function()
         local hostname = sysmon.get_hostname()
         local os_name = sysmon.get_os_name()
         local uptime_str = format_uptime(sysmon.get_uptime())
-        local cpu_brand = sysmon.get_cpu_brand()
+        local cpu_brand = sysmon.get_cpu_brand():gsub("%s+", " ")
         local cpu_freq = sysmon.get_cpu_frequency()
-        
-        -- Clean up double spaces that some CPU brands report
-        cpu_brand = cpu_brand:gsub("%s+", " ")
         
         local text = string.format("%s │ %s │ CPU: %s @ %d MHz │ Uptime: %s", hostname, os_name, cpu_brand, cpu_freq, uptime_str)
         return text, "cyan"
     end
 })
 
--- 1. Register the CPU Widget
+-- 1. CPU Percent with Sparkline History Graph
+local cpu_history = {}
 sysmon.register_widget("1. CPU Percent", {
     render = function()
         local usage = sysmon.get_cpu_usage()
-        local bar = sysmon.create_bar(usage, 20)
-        local display_str = string.format("[%s]  %.1f", bar, usage) .. "%"
         
-        local color = "green"
-        if usage > 80 then
-            color = "red"
-        elseif usage > 50 then
-            color = "yellow"
+        -- Store history up to 30 values
+        table.insert(cpu_history, usage)
+        if #cpu_history > 30 then
+            table.remove(cpu_history, 1)
         end
         
-        return display_str, color
+        local bar = make_colored_bar(usage, 20)
+        local spark = sysmon.create_sparkline(cpu_history)
+        
+        return merge_spans(bar, {
+            { string.format("  %5.1f%%  ", usage), "white" },
+            { "Trend: ", "gray" },
+            { spark, "magenta" }
+        })
     end
 })
 
--- 2. Register the RAM Widget
+-- 2. RAM Usage with Multi-color Bar
 sysmon.register_widget("2. RAM Usage", {
     render = function()
         local total_gb = sysmon.get_total_memory() / 1024 / 1024 / 1024
         local used_gb = sysmon.get_used_memory() / 1024 / 1024 / 1024
         local pct = sysmon.get_memory_percent()
         
-        local bar = sysmon.create_bar(pct, 20)
-        local display_str = string.format("[%s]  %.2f GB / %.2f GB (%.1f", bar, used_gb, total_gb, pct) .. "%)"
-        
-        local color = "green"
-        if pct > 85 then
-            color = "red"
-        elseif pct > 65 then
-            color = "yellow"
-        end
-        
-        return display_str, color
+        local bar = make_colored_bar(pct, 20)
+        return merge_spans(bar, {
+            { string.format("  %5.2f GB / %5.2f GB (%5.1f", used_gb, total_gb, pct) .. "%)", "white" }
+        })
     end
 })
 
--- 3. Register the GPU Widget
+-- 3. GPU Usage with Multi-color Bar
 sysmon.register_widget("3. GPU Usage", {
     render = function()
         local usage = sysmon.get_gpu_usage()
@@ -88,22 +116,15 @@ sysmon.register_widget("3. GPU Usage", {
         local total_vram_mb = sysmon.get_gpu_memory_total() / 1024 / 1024
         local used_vram_mb = sysmon.get_gpu_memory_used() / 1024 / 1024
         
-        local bar = sysmon.create_bar(usage, 20)
-        local load_str = string.format("[%s]  %s | Load: %.1f", bar, name, usage) .. "%"
-        local vram_str = string.format(" | VRAM: %.0f MB / %.0f MB", used_vram_mb, total_vram_mb)
-        
-        local color = "green"
-        if usage > 80 then
-            color = "red"
-        elseif usage > 50 then
-            color = "yellow"
-        end
-        
-        return load_str .. vram_str, color
+        local bar = make_colored_bar(usage, 20)
+        return merge_spans(bar, {
+            { string.format("  Load: %5.1f%%  ", usage), "white" },
+            { name .. " │ VRAM: " .. string.format("%.0f MB / %.0f MB", used_vram_mb, total_vram_mb), "cyan" }
+        })
     end
 })
 
--- 4. Dynamic Disk Registry (Creates separate widgets for all mounted drives)
+-- 4. Dynamic Disk Registry
 local disks = sysmon.get_disks()
 for i, disk in ipairs(disks) do
     local key = string.format("4.%d. Disk %s", i, disk.mount_point)
@@ -117,19 +138,40 @@ for i, disk in ipairs(disks) do
                     local used = total - avail
                     local pct = (used / total) * 100
                     
-                    local bar = sysmon.create_bar(pct, 20)
-                    local color = "green"
-                    if pct > 90 then
-                        color = "red"
-                    elseif pct > 75 then
-                        color = "yellow"
-                    end
-                    
+                    local bar = make_colored_bar(pct, 20)
                     local label = (d.name ~= "") and d.name or "Local Volume"
-                    return string.format("[%s]  %.1f GB / %.1f GB (%.1f", bar, used, total, pct) .. "%) | label: " .. label, color
+                    
+                    return merge_spans(bar, {
+                        { string.format("  %5.1f GB / %5.1f GB (%5.1f", used, total, pct) .. "%)", "white" },
+                        { " │ label: " .. label, "cyan" }
+                    })
                 end
             end
             return "Disconnected", "gray"
+        end
+    })
+end
+
+-- 5. Top 5 CPU Processes (Dynamic widget listing)
+for i = 1, 5 do
+    local key = string.format("5.%d. Task", i)
+    sysmon.register_widget(key, {
+        render = function()
+            local procs = sysmon.get_processes("cpu", 5)
+            local proc = procs[i]
+            
+            if not proc then
+                return " - ", "gray"
+            end
+            
+            local mem_mb = proc.memory / 1024 / 1024
+            
+            return {
+                { string.format("PID: %-6d", proc.pid), "gray" },
+                { string.format(" │  %-15.15s", proc.name), "white" },
+                { string.format(" │  CPU: %5.1f%%", proc.cpu_usage), (proc.cpu_usage > 50 and "yellow" or (proc.cpu_usage > 80 and "red" or "green")) },
+                { string.format(" │  MEM: %6.1f MB", mem_mb), "cyan" }
+            }
         end
     })
 end

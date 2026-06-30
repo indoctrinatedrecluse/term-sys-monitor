@@ -1,6 +1,6 @@
 mod engine;
 
-use engine::{LuaEngine, WidgetInfo, DiskStats};
+use engine::{LuaEngine, WidgetInfo, DiskStats, ProcessStats, SpanInfo};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -76,6 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu_frequency = Arc::new(AtomicU64::new(0));
     let uptime = Arc::new(AtomicU64::new(0));
     let disks = Arc::new(std::sync::Mutex::new(Vec::<DiskStats>::new()));
+    let top_cpu_procs = Arc::new(std::sync::Mutex::new(Vec::<ProcessStats>::new()));
+    let top_mem_procs = Arc::new(std::sync::Mutex::new(Vec::<ProcessStats>::new()));
 
     // Query static host details at startup using a temp system instance
     let mut temp_sys = System::new_all();
@@ -97,6 +99,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu_frequency_clone = cpu_frequency.clone();
     let uptime_clone = uptime.clone();
     let disks_clone = disks.clone();
+    let top_cpu_procs_clone = top_cpu_procs.clone();
+    let top_mem_procs_clone = top_mem_procs.clone();
 
     std::thread::spawn(move || {
         let mut sys = System::new_all();
@@ -120,9 +124,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Warm up sysinfo to calculate first CPU usage interval correctly
         sys.refresh_cpu();
         sys.refresh_memory();
+        sys.refresh_processes();
         std::thread::sleep(Duration::from_millis(100));
         sys.refresh_cpu();
         sys.refresh_memory();
+        sys.refresh_processes();
 
         let mut loop_counter: u64 = 0;
 
@@ -159,6 +165,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let upt = System::uptime();
             uptime_clone.store(upt, Ordering::Relaxed);
 
+            // Refresh processes every 1 second (every 2 loops)
+            if loop_counter % 2 == 0 {
+                sys.refresh_processes();
+                
+                let mut all_procs = Vec::new();
+                for (pid, process) in sys.processes() {
+                    all_procs.push(ProcessStats {
+                        pid: pid.as_u32() as usize,
+                        name: process.name().to_string(),
+                        cpu_usage: process.cpu_usage(),
+                        memory: process.memory(),
+                    });
+                }
+
+                // Get top CPU processes
+                let mut cpu_procs = all_procs.clone();
+                cpu_procs.sort_by(|a, b| {
+                    b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                cpu_procs.truncate(10);
+                if let Ok(mut lock) = top_cpu_procs_clone.lock() {
+                    *lock = cpu_procs;
+                }
+
+                // Get top Memory processes
+                let mut mem_procs = all_procs;
+                mem_procs.sort_by(|a, b| b.memory.cmp(&a.memory));
+                mem_procs.truncate(10);
+                if let Ok(mut lock) = top_mem_procs_clone.lock() {
+                    *lock = mem_procs;
+                }
+            }
+
             // Refresh Disk list every 5 seconds (500ms * 10)
             if loop_counter % 10 == 0 {
                 disk_loader.refresh_list();
@@ -194,6 +233,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_frequency,
         uptime,
         disks,
+        top_cpu_procs,
+        top_mem_procs,
         nvml,
         hostname,
         os_name,
@@ -217,6 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Main TUI render loop
     let tick_rate = Duration::from_millis(250);
     let mut last_tick = Instant::now();
+    let mut reload_banner_time: Option<Instant> = None;
 
     loop {
         // Poll keyboard event with timeout
@@ -228,6 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Event::Key(key) = event::read()? {
                 if key.code == KeyCode::Char('q') {
                     break;
+                } else if key.code == KeyCode::Char('r') {
+                    // Trigger configuration reloading
+                    if let Ok(()) = lua_engine.reload_config("config.lua") {
+                        reload_banner_time = Some(Instant::now());
+                    }
                 }
             }
         }
@@ -260,20 +307,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Body containing Lua widgets
                 let widgets = match lua_engine.get_widgets() {
                     Ok(w) => w,
-                    Err(e) => vec![WidgetInfo {
-                        name: "Error".to_string(),
-                        text: format!("Engine Error: {}", e),
-                        color: "red".to_string(),
-                    }],
+                    Err(e) => {
+                        let mut spans = Vec::new();
+                        spans.push(SpanInfo {
+                            text: format!("Engine Error: {}", e),
+                            color: "red".to_string(),
+                        });
+                        vec![WidgetInfo {
+                            name: "Error".to_string(),
+                            spans,
+                        }]
+                    }
                 };
 
                 let mut widget_spans = Vec::new();
                 for w in widgets {
-                    widget_spans.push(Line::from(vec![
+                    let mut line_spans = vec![
                         // Pad widget name to 18 characters and add a nice column separator
                         Span::styled(format!(" {: <18} │ ", w.name), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
-                        Span::styled(w.text, Style::default().fg(parse_color(&w.color))),
-                    ]));
+                    ];
+                    
+                    for span in w.spans {
+                        line_spans.push(Span::styled(
+                            span.text,
+                            Style::default().fg(parse_color(&span.color)),
+                        ));
+                    }
+                    widget_spans.push(Line::from(line_spans));
                 }
 
                 // Fill rest of the body with some instructions if empty
@@ -291,8 +351,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .style(Style::default().fg(Color::White));
                 f.render_widget(body, chunks[1]);
 
-                // Footer
-                let footer = Paragraph::new(" Press [q] to Quit | Powered by Rust & Lua")
+                // Footer with hot-reload status overlay
+                let reload_status = if let Some(t) = reload_banner_time {
+                    if t.elapsed() < Duration::from_secs(2) {
+                        "  [ CONFIG RELOADED! ]"
+                    } else {
+                        ""
+                    }
+                } else {
+                    ""
+                };
+                
+                let footer_text = format!(" Press [q] to Quit | Press [r] to Reload{}", reload_status);
+                let footer = Paragraph::new(footer_text)
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
