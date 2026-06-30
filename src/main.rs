@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::io;
+use std::path::PathBuf;
 
 use chrono::Local;
 use crossterm::{
@@ -50,6 +51,36 @@ fn restore_terminal() {
         LeaveAlternateScreen,
         event::DisableMouseCapture
     );
+}
+
+// Determines the configuration path based on standard platform guidelines
+fn get_config_path() -> PathBuf {
+    // 1. Check local directory first (development mode)
+    let local_path = PathBuf::from("config.lua");
+    if local_path.exists() {
+        return local_path;
+    }
+
+    // 2. Resolve to user configuration folder
+    let mut config_dir = if cfg!(target_os = "windows") {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            PathBuf::from(appdata)
+        } else {
+            PathBuf::from(".")
+        }
+    } else {
+        // Linux/macOS
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let mut p = PathBuf::from(home);
+        p.push(".config");
+        p
+    };
+
+    config_dir.push("sysmon");
+    // Ensure the folder exists
+    let _ = std::fs::create_dir_all(&config_dir);
+    config_dir.push("config.lua");
+    config_dir
 }
 
 #[tokio::main]
@@ -249,9 +280,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    if let Err(e) = lua_engine.load_config("config.lua") {
+    // Determine config path and write embedded default config if none is present
+    let config_path = get_config_path();
+    if !config_path.exists() {
+        let default_config = include_str!("../config.lua");
+        if let Err(e) = std::fs::write(&config_path, default_config) {
+            eprintln!("Warning: Failed to write default config.lua: {}", e);
+        }
+    }
+
+    if let Err(e) = lua_engine.load_config(&config_path) {
         restore_terminal();
-        eprintln!("Failed to load config.lua: {}", e);
+        eprintln!("Failed to load config.lua ({:?}): {}", config_path, e);
         std::process::exit(1);
     }
 
@@ -272,7 +312,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 } else if key.code == KeyCode::Char('r') {
                     // Trigger configuration reloading
-                    if let Ok(()) = lua_engine.reload_config("config.lua") {
+                    let active_config = get_config_path();
+                    if let Ok(()) = lua_engine.reload_config(&active_config) {
                         reload_banner_time = Some(Instant::now());
                     }
                 }

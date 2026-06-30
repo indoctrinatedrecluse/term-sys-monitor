@@ -32,26 +32,45 @@ graph TD
 
 ---
 
-## 🚀 Build and Run
+## 🚀 Installation & Execution
 
-### Standard Cargo Execution
-To run the project in development mode:
-```bash
-cargo run
-```
+### 1. One-Click Global Installation
+You can download, compile-free install, and configure `term-sys-monitor` in your `PATH` using a single command:
 
-### One-Click Launch Scripts
-To clean up previous builds, check/update dependencies, and start the system monitor with one click:
-
+* **Linux / macOS (Bash)**:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/indoctrinatedrecluse/term-sys-monitor/main/install.sh | bash
+  ```
 * **Windows (PowerShell)**:
   ```powershell
-  ./run.ps1
+  iwr -useb https://raw.githubusercontent.com/indoctrinatedrecluse/term-sys-monitor/main/install.ps1 | iex
   ```
-* **Linux / macOS**:
-  ```bash
-  chmod +x run.sh
-  ./run.sh
-  ```
+
+Once installed, restart your shell and execute:
+```bash
+term-sys-monitor
+```
+> [!NOTE]
+> On the very first launch, the program will automatically create a configuration folder and copy a default `config.lua` script there:
+> * **Windows**: `%APPDATA%\sysmon\config.lua`
+> * **Linux/macOS**: `$HOME/.config/sysmon/config.lua`
+
+---
+
+### 2. Cargo Installation (Compile from Source)
+If you have the Rust toolchain installed, run:
+```bash
+cargo install --git https://github.com/indoctrinatedrecluse/term-sys-monitor.git
+```
+
+---
+
+### 3. Local Development Build
+To compile and run the project locally in the workspace:
+* **Cargo**: `cargo run`
+* **Windows (PowerShell script)**: `./run.ps1`
+* **Linux / macOS (Bash script)**: `chmod +x run.sh && ./run.sh`
+
 
 ---
 
