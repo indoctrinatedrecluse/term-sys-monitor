@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::io;
 
+use chrono::Local;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -13,10 +14,10 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{block::Title, Block, Borders, Paragraph},
     Terminal,
 };
 use sysinfo::System;
@@ -157,6 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if last_tick.elapsed() >= tick_rate {
+            let time_str = Local::now().format("%H:%M:%S").to_string();
+
             terminal.draw(|f| {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -167,10 +170,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ])
                     .split(f.size());
 
-                // Header
-                let header = Paragraph::new("   🖥️  TERMINAL SYSTEM MONITOR  🖥️")
-                    .block(Block::default().borders(Borders::ALL))
-                    .style(Style::default().fg(Color::Cyan));
+                // Header with live clock
+                let header = Paragraph::new("   Status: Active | Refresh: 250ms")
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(Title::from(" 🖥️  TERMINAL SYSTEM MONITOR  ").alignment(Alignment::Left))
+                            .title(Title::from(format!(" 🕒 {} ", time_str)).alignment(Alignment::Right))
+                            .border_style(Style::default().fg(Color::Cyan))
+                    )
+                    .style(Style::default().fg(Color::DarkGray));
                 f.render_widget(header, chunks[0]);
 
                 // Body containing Lua widgets
@@ -186,7 +195,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut widget_spans = Vec::new();
                 for w in widgets {
                     widget_spans.push(Line::from(vec![
-                        Span::styled(format!(" {}: ", w.name), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+                        // Pad widget name to 16 characters and add a nice column separator
+                        Span::styled(format!(" {: <16} │ ", w.name), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
                         Span::styled(w.text, Style::default().fg(parse_color(&w.color))),
                     ]));
                 }
@@ -197,13 +207,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let body = Paragraph::new(widget_spans)
-                    .block(Block::default().borders(Borders::ALL).title(" Lua Configured Widgets "))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(Title::from(" Lua Configured Widgets ").alignment(Alignment::Left))
+                            .border_style(Style::default().fg(Color::DarkGray))
+                    )
                     .style(Style::default().fg(Color::White));
                 f.render_widget(body, chunks[1]);
 
                 // Footer
                 let footer = Paragraph::new(" Press [q] to Quit | Powered by Rust & Lua")
-                    .block(Block::default().borders(Borders::ALL))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::DarkGray))
+                    )
                     .style(Style::default().fg(Color::DarkGray));
                 f.render_widget(footer, chunks[2]);
             })?;

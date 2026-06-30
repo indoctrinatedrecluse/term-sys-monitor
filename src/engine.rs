@@ -152,6 +152,19 @@ impl LuaEngine {
             })?;
             sysmon.set("get_gpu_name", get_gpu_name)?;
             
+            // --- UI Helpers ---
+            
+            // sysmon.create_bar(percent, width)
+            let create_bar = lua.create_function(|_, (percent, width): (f32, Option<usize>)| {
+                let width = width.unwrap_or(20);
+                let percent = percent.clamp(0.0, 100.0);
+                let filled = ((percent / 100.0) * width as f32).round() as usize;
+                let empty = width - filled;
+                let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+                Ok(bar)
+            })?;
+            sysmon.set("create_bar", create_bar)?;
+            
             // --- General Widget Registry ---
             
             // sysmon.register_widget(name, config)
